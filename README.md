@@ -1,6 +1,6 @@
 # Updates  
 ## Level 1: Basic Chat Bot API  
-### Demonstration Video for level 1 (Hosted on YouTube)
+### Demonstration Video for level 1 (Click the thumbnail below to play YouTube video)
 [![Basic Chat Bot API](https://img.youtube.com/vi/qwBli23dtbk/maxresdefault.jpg)](https://youtu.be/qwBli23dtbk)  
 
 ## Level 2: Store & Retrieve Movie Script Data  
