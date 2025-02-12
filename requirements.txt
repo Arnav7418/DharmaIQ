@@ -1,0 +1,12 @@
+fastapi==0.104.1
+uvicorn==0.23.2
+openai==1.61.1
+sqlite3
+fuzzywuzzy==0.18.0
+python-Levenshtein==0.23.0
+pydantic==2.5.2
+python-dotenv==1.0.0
+
+
+
+#pip install -r requirements.txt
