@@ -5,10 +5,13 @@ import sqlite3
 import logging
 from models.userMessage import ChatRequest
 from fuzzywuzzy import fuzz 
+from dotenv import load_dotenv
 
 
-# Load environment variables
-OPENAI_API_KEY = "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"
+load_dotenv()
+
+
+OPENAI_API_KEY = os.getenv("OPEN_AI_API")
 
 app = FastAPI()
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
