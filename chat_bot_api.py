@@ -11,10 +11,9 @@ from dotenv import load_dotenv
 
 
 
-load_dotenv()
-OPENAI_API_KEY = os.getenv("OPEN_AI_API")
-
 app = FastAPI()
+
+OPENAI_API_KEY="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"
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 def get_db_connection():
@@ -25,7 +24,6 @@ def get_db_connection():
 def find_similar_response(character_name: str, user_message: str):
     conn = get_db_connection()
     cursor = conn.cursor()
-
     cursor.execute("SELECT * FROM scripts WHERE LOWER(character) = LOWER(?)", (character_name,))
     messages = cursor.fetchall()
 
@@ -45,13 +43,10 @@ def find_similar_response(character_name: str, user_message: str):
 
 @app.post("/chat")
 async def chat_with_character(request: ChatRequest):
-    try:        
+    try:                
         db_response = find_similar_response(request.movie_character_name, request.user_message)
-        
         if db_response:
             return {"character": request.movie_character_name, "response": db_response}
-
-        
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
