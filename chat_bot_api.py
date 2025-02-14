@@ -1,24 +1,94 @@
 import chromadb
-from fastapi import FastAPI, HTTPException
+import aioredis
+from fastapi import FastAPI, HTTPException, Request, Depends
 import google.generativeai as genai
 import os
-import sqlite3
 import logging
 from models.userMessage import ChatRequest
-from fuzzywuzzy import fuzz
 from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer  
-
+from contextlib import asynccontextmanager
+import time
 
 load_dotenv()
 
-app = FastAPI()
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-pro')
 
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 collection = chroma_client.get_or_create_collection(name="chroma_scripts")
+
+RATE_LIMIT = 2 
+RATE_LIMIT_WINDOW = 2 
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global redis
+    redis = await aioredis.from_url("redis://localhost", decode_responses=True)
+    yield 
+    await redis.close()
+
+app = FastAPI(lifespan=lifespan)
+
+async def rate_limiter(request: Request):
+    user_id = request.client.host 
+    current_time = time.time()
+    key = f"rate_limit:{user_id}"
+    await redis.zremrangebyscore(key, "-inf", current_time - RATE_LIMIT_WINDOW)
+    request_count = await redis.zcount(key, "-inf", "+inf") 
+
+    # print(f"User: {user_id} | Requests in window: {request_count}") // From ARNAV(author) - Is a debugging statement
+    MAX_REQUESTS = 2  
+    if request_count >= MAX_REQUESTS:
+        print("Rate limit exceeded!")
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Try again later.")
+
+    await redis.zadd(key, {str(current_time): current_time})
+    
+    await redis.expire(key, RATE_LIMIT_WINDOW)
+
+
+@app.post("/chat")
+async def chat_with_character(request: ChatRequest, _: None = Depends(rate_limiter)):
+    cache_key = f"{request.movie_character_name}:{request.user_message}"
+    cached_response = await redis.get(cache_key)
+
+    if cached_response:
+        return {
+            "character": request.movie_character_name,
+            "response": cached_response,
+            "source": "Cache",
+            "context": "Cached response"
+        }
+
+    results = collection.query(
+        query_texts=[request.user_message], 
+        n_results=1,
+        where={"character": request.movie_character_name}
+    )
+
+    context = results["documents"][0] if results["documents"] else "No context found"
+
+    prompt = f"""You are {request.movie_character_name} from a movie. 
+    Respond exactly how {request.movie_character_name} would talk, maintaining 
+    the character's personality and if possible, refer to the movie(s) the character is from.
+    User message: {request.user_message}"""
+
+    response = model.generate_content(prompt).text.strip()
+
+    await redis.setex(cache_key, 3600, response)
+
+    return {
+        "character": request.movie_character_name,
+        "response": response,
+        "source": "Generative AI",
+        "context": context
+    }
+
+
+
+
 
 
 def get_db_connection():
@@ -35,51 +105,11 @@ def find_similar_response(character_name: str, user_message: str):
     for row in messages:
         stored_message = row["user_message"]
         similarity = fuzz.ratio(user_message.lower(), stored_message.lower())
-        
-        logging.info(f"Checking similarity: User Message: {user_message} | Stored Message: {stored_message} | Similarity: {similarity}")
-        
+           
         if similarity > 50:
-            logging.info("Match found in database. Returning stored response.")
             conn.close()
             return row["response_to_user_message"]
     
     conn.close()
     return None
 
-@app.post("/chat")
-async def chat_with_character(request: ChatRequest):
-    try:
-        # db_response = find_similar_response(request.movie_character_name, request.user_message)
-        # if db_response:
-        #     return {
-        #         "character": request.movie_character_name,
-        #         "response": db_response,
-        #         "source": "Database"
-        #     }
-        
-
-
-        results = collection.query(
-            query_texts=[request.user_message], 
-            n_results=1,
-            where={"character": request.movie_character_name}
-        )
-        if results["documents"]:
-            context = results["documents"][0]  
-        else:
-            context = "No context found" 
-
-        prompt = f"""You are {request.movie_character_name} from a movie. 
-        Respond exactly how {request.movie_character_name} would talk, maintaining 
-        the character's personality and if possible, refer to the movie(s) the character is from.
-        User message: {request.user_message}"""
-
-        response = model.generate_content(prompt)
-        return {
-            "character": request.movie_character_name,
-            "response": response.text.strip(),
-            "source": "Generative AI",
-            "context": context
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
