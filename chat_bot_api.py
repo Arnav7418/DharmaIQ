@@ -1,13 +1,18 @@
+import sqlite3
 import chromadb
 import aioredis
 from fastapi import FastAPI, HTTPException, Request, Depends
 import google.generativeai as genai
 import os
 import logging
+
+from traitlets import FuzzyEnum
 from models.userMessage import ChatRequest
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 import time
+import asyncio  
+from concurrent.futures import ThreadPoolExecutor  
 
 load_dotenv()
 
@@ -18,9 +23,10 @@ model = genai.GenerativeModel('gemini-pro')
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 collection = chroma_client.get_or_create_collection(name="chroma_scripts")
 
-RATE_LIMIT = 2 
+RATE_LIMIT = 5
 RATE_LIMIT_WINDOW = 2 
 
+executor = ThreadPoolExecutor()  
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -38,54 +44,68 @@ async def rate_limiter(request: Request):
     await redis.zremrangebyscore(key, "-inf", current_time - RATE_LIMIT_WINDOW)
     request_count = await redis.zcount(key, "-inf", "+inf") 
 
-    # print(f"User: {user_id} | Requests in window: {request_count}") // From ARNAV(author) - Is a debugging statement
     MAX_REQUESTS = 2  
     if request_count >= MAX_REQUESTS:
-        print("Rate limit exceeded!")
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Try again later.")
 
     await redis.zadd(key, {str(current_time): current_time})
-    
     await redis.expire(key, RATE_LIMIT_WINDOW)
 
+async def query_chroma(character_name: str, user_message: str):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: collection.query(
+        query_texts=[user_message], 
+        n_results=1,
+        where={"character": character_name}
+    ))
+
+async def generate_ai_response(prompt: str):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(executor, lambda: model.generate_content(prompt).text.strip())
 
 @app.post("/chat")
 async def chat_with_character(request: ChatRequest, _: None = Depends(rate_limiter)):
+    start_time = time.time()
+
     cache_key = f"{request.movie_character_name}:{request.user_message}"
     cached_response = await redis.get(cache_key)
 
     if cached_response:
+        total_time = time.time() - start_time
         return {
             "character": request.movie_character_name,
             "response": cached_response,
             "source": "Cache",
-            "context": "Cached response"
+            "context": "Cached response",
+            "time_taken": f"{total_time:.4f} seconds"
         }
 
-    results = collection.query(
-        query_texts=[request.user_message], 
-        n_results=1,
-        where={"character": request.movie_character_name}
-    )
-
-    context = results["documents"][0] if results["documents"] else "No context found"
-
+    
+    chroma_task = query_chroma(request.movie_character_name, request.user_message)
+    
     prompt = f"""You are {request.movie_character_name} from a movie. 
     Respond exactly how {request.movie_character_name} would talk, maintaining 
     the character's personality and if possible, refer to the movie(s) the character is from.
     User message: {request.user_message}"""
+    
+    ai_task = generate_ai_response(prompt)
 
-    response = model.generate_content(prompt).text.strip()
+    results, response = await asyncio.gather(chroma_task, ai_task)
 
+    context = results["documents"][0] if results["documents"] else "No context found"
+
+   
     await redis.setex(cache_key, 3600, response)
+
+    total_time = time.time() - start_time
 
     return {
         "character": request.movie_character_name,
         "response": response,
         "source": "Generative AI",
-        "context": context
+        "context": context,
+        "time_taken": f"{total_time:.4f} seconds"
     }
-
 
 
 
@@ -104,7 +124,7 @@ def find_similar_response(character_name: str, user_message: str):
     
     for row in messages:
         stored_message = row["user_message"]
-        similarity = fuzz.ratio(user_message.lower(), stored_message.lower())
+        similarity = FuzzyEnum.ratio(user_message.lower(), stored_message.lower())
            
         if similarity > 50:
             conn.close()
@@ -112,4 +132,3 @@ def find_similar_response(character_name: str, user_message: str):
     
     conn.close()
     return None
-
