@@ -6,3 +6,9 @@
 ## Level 2: Store & Retrieve Movie Script Data  
 ### Demonstration Video for level 2 (Hosted on YouTube)
 [![Store & Retrieve Movie Script Data](https://img.youtube.com/vi/jd_L0a9Ztho/maxresdefault.jpg)](https://youtu.be/jd_L0a9Ztho)  
+
+
+## Level 3: Implement RAG with Vector Search
+### Demonstration Video for level 3 (Hosted on YouTube)
+[![Implement RAG with Vector Search](https://img.youtube.com/vi/_sWnGE9vdxs/maxresdefault.jpg)](https://youtu.be/_sWnGE9vdxs)  
+
