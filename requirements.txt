@@ -1,6 +1,5 @@
 fastapi==0.104.1
 uvicorn==0.23.2
-sqlite3
 fuzzywuzzy==0.18.0
 python-Levenshtein==0.23.0
 pydantic==2.5.2
@@ -9,8 +8,3 @@ chromadb==0.4.22
 sentence-transformers==2.2.2
 aioredis==2.0.1
 
-
-
-
-
-#pip install -r requirements.txt
