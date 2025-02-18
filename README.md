@@ -19,5 +19,5 @@
 
 ## Level 5: Optimize for Latency & Deploy 
 ### Demonstration Video for level 5 (Hosted on YouTube)
-[![Optimize for Latency & Deploy ](https://img.youtube.com/vi/5rqG21H6ieo/maxresdefault.jpg)](https://youtu.be/5rqG21H6ieo)  
+[![Optimize for Latency & Deploy ](https://img.youtube.com/vi/8FzKVNJ1CjQ/maxresdefault.jpg)](https://youtu.be/5rqG21H6ieo)  
 
