@@ -16,3 +16,9 @@
 ### Demonstration Video for level 4 (Hosted on YouTube)
 [![Implement RAG with Vector Search](https://img.youtube.com/vi/8FzKVNJ1CjQ/maxresdefault.jpg)](https://youtu.be/8FzKVNJ1CjQ)  
 
+
+## Level 5: Optimize for Latency & Deploy 
+### Demonstration Video for level 5 (Hosted on YouTube)
+[![Implement RAG with Vector Search](https://img.youtube.com/vi/5rqG21H6ieo/maxresdefault.jpg)](https://youtu.be/5rqG21H6ieo)  
+
+
