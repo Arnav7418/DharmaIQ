@@ -1,0 +1,33 @@
+# Ignore environment files  
+.env  
+.env.local  
+.env.*  
+
+# Ignore Python cache files  
+__pycache__/  
+*.pyc  
+*.pyo  
+*.pyd  
+
+# Ignore database and storage files  
+chroma_db/  
+chat_responses.db  
+
+# Ignore logs and temp files  
+*.log  
+*.sqlite3  
+tempCodeRunnerFile.py  
+
+# Ignore Vercel cache directories  
+.vercel/  
+.vercelignore  
+
+# Ignore Docker build files if not needed  
+Dockerfile  
+
+# Ignore test files  
+test/  
+
+# Ignore dependency caches  
+pip-log.txt  
+pip-delete-this-directory.txt  
