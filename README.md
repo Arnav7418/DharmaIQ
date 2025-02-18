@@ -12,3 +12,7 @@
 ### Demonstration Video for level 3 (Hosted on YouTube)
 [![Implement RAG with Vector Search](https://img.youtube.com/vi/_sWnGE9vdxs/maxresdefault.jpg)](https://youtu.be/_sWnGE9vdxs)  
 
+## Level 4: Scale System to Handle High Traffic
+### Demonstration Video for level 4 (Hosted on YouTube)
+[![Implement RAG with Vector Search](https://img.youtube.com/vi/8FzKVNJ1CjQ/maxresdefault.jpg)](https://youtu.be/8FzKVNJ1CjQ)  
+
