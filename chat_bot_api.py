@@ -1,9 +1,10 @@
+import logging
 import sqlite3
+import threading
 import chromadb
 import aioredis
 import google.generativeai as genai
 import os
-import logging
 import asyncio  
 import time
 from dotenv import load_dotenv
@@ -13,7 +14,9 @@ from concurrent.futures import ThreadPoolExecutor
 from traitlets import FuzzyEnum
 from typing import Optional, Dict, Any
 from datetime import datetime
-
+from prometheus_client import REGISTRY, Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST, start_http_server
+from prometheus_fastapi_instrumentator import Instrumentator
+from starlette.responses import Response
 
 load_dotenv()
 
@@ -31,11 +34,43 @@ collection = chroma_client.get_or_create_collection(name="chroma_scripts")
 executor = ThreadPoolExecutor()
 
 
+
+# From ARNAV(author) - Monitoring tools initiazition
+
+REQUESTS_TOTAL = Counter(
+    "app_requests_total",
+    "Total number of requests by source",
+    ["source"]
+)
+
+RESPONSE_TIME = Histogram(
+    "app_response_time_seconds",
+    "Response time in seconds",
+    ["source"]
+)
+
+ERROR_COUNTER = Counter(
+    "app_errors_total",
+    "Total number of errors",
+    ["type"]
+)
+
+ACTIVE_CONNECTIONS = Counter(
+    "app_active_connections",
+    "Number of active WebSocket connections"
+)
+
 DATABASE_PATH = "chat_history.db"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global redis
+    metrics_thread = threading.Thread(
+        target=start_metrics_server,
+        args=(9090,),
+        daemon=True
+    )
+    metrics_thread.start()
     redis = await aioredis.from_url("redis://localhost", decode_responses=True)
     create_chat_history_db()
     yield
@@ -43,6 +78,18 @@ async def lifespan(app: FastAPI):
     executor.shutdown(wait=True)
 
 app = FastAPI(lifespan=lifespan)
+Instrumentator().instrument(app).expose(app)
+
+
+def start_metrics_server(port=9090):
+    start_http_server(port)
+    logging.info(f"Metrics server started on port {port}")
+
+
+@app.get("/metrics")
+async def metrics():
+    return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
+
 
 class DatabaseConnection:
     def __init__(self):
@@ -165,30 +212,31 @@ async def generate_ai_response(prompt: str) -> str:
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
+    ACTIVE_CONNECTIONS.inc()
+    
     try:
         while True:
             try:
                 data = await websocket.receive_json()
-            except Exception as e:
-                await websocket.send_json({
-                    "error": "Invalid message format"
-                })
-                continue
-            user_id = data.get("user_id")
-            character_name = data.get("movie_character_name")
-            user_message = data.get("user_message")
-            
-            if not all([user_id, character_name, user_message]):
-                await websocket.send_json({
-                    "error": "Missing required fields: user_id, movie_character_name, user_message"
-                })
-                continue
-            start_time = time.time()
-            
-            try:
+                
+                user_id = data.get("user_id")
+                character_name = data.get("movie_character_name")
+                user_message = data.get("user_message")
+                
+                if not all([user_id, character_name, user_message]):
+                    ERROR_COUNTER.labels(type="missing_fields").inc()
+                    await websocket.send_json({
+                        "error": "Missing required fields"
+                    })
+                    continue
+                
+                start_time = time.time()
                 similar_response = find_similar_response(user_id, character_name, user_message)
                 if similar_response:
                     total_time = time.time() - start_time
+                    REQUESTS_TOTAL.labels(source="chat_history").inc()
+                    RESPONSE_TIME.labels(source="chat_history").observe(total_time)
+                    
                     await websocket.send_json({
                         "user_id": user_id,
                         "character": character_name,
@@ -202,6 +250,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 
                 if cached_response:
                     total_time = time.time() - start_time
+                    REQUESTS_TOTAL.labels(source="cache").inc()
+                    RESPONSE_TIME.labels(source="cache").observe(total_time)
+                    
                     await websocket.send_json({
                         "user_id": user_id,
                         "character": character_name,
@@ -210,45 +261,53 @@ async def websocket_endpoint(websocket: WebSocket):
                         "time_taken": f"{total_time:.4f} seconds"
                     })
                     continue
-                chroma_task = query_chroma(character_name, user_message)
-                prompt = f"""You are {character_name} from a movie. 
-                Respond exactly how {character_name} would talk, maintaining 
-                the character's personality and if possible, refer to the movie(s) 
-                the character is from.
-                User message: {user_message}"""
-                
-                ai_task = generate_ai_response(prompt)
-                results, response = await asyncio.gather(chroma_task, ai_task)
-                
-                context = results["documents"][0] if results["documents"] else "No context found"
-                await redis.setex(cache_key, 3600, response)
-                metadata = {
-                    "context": context,
-                    "source": "Generative AI",
-                    "timestamp": datetime.now().isoformat()
-                }
-                save_chat_history(user_id, character_name, user_message, response, metadata)
-                
-                total_time = time.time() - start_time
-                
-                await websocket.send_json({
-                    "user_id": user_id,
-                    "character": character_name,
-                    "response": response,
-                    "source": "Generative AI",
-                    "context": context,
-                    "time_taken": f"{total_time:.4f} seconds"
-                })
-                
+                try:
+                    chroma_task = query_chroma(character_name, user_message)
+                    prompt = f"""You are {character_name} from a movie. 
+                    Respond exactly how {character_name} would talk, maintaining 
+                    the character's personality and if possible, refer to the movie(s) 
+                    the character is from.
+                    User message: {user_message}"""
+                    
+                    ai_task = generate_ai_response(prompt)
+                    results, response = await asyncio.gather(chroma_task, ai_task)
+                    
+                    context = results["documents"][0] if results["documents"] else "No context found"
+                    await redis.setex(cache_key, 3600, response)
+                    
+                    total_time = time.time() - start_time
+                    REQUESTS_TOTAL.labels(source="generative_ai").inc()
+                    RESPONSE_TIME.labels(source="generative_ai").observe(total_time)
+                    
+                    metadata = {
+                        "context": context,
+                        "source": "Generative AI",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    save_chat_history(user_id, character_name, user_message, response, metadata)
+                    
+                    await websocket.send_json({
+                        "user_id": user_id,
+                        "character": character_name,
+                        "response": response,
+                        "source": "Generative AI",
+                        "context": context,
+                        "time_taken": f"{total_time:.4f} seconds"
+                    })
+                    
+                except Exception as e:
+                    ERROR_COUNTER.labels(type="ai_generation").inc()
+                    raise
+                    
             except Exception as e:
+                ERROR_COUNTER.labels(type="websocket_communication").inc()
                 await websocket.send_json({
                     "error": f"Error processing request: {str(e)}"
                 })
                 
     except WebSocketDisconnect:
-        return "Web Socket disconneted"
-
-
+        ACTIVE_CONNECTIONS.dec()
+        return "Web Socket disconnected"
 
 if __name__ == "__main__":
     import uvicorn
